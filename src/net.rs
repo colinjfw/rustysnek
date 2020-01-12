@@ -1,5 +1,6 @@
 use log::*;
-use serde::Serialize;
+use serde::{Serialize};
+use serde::de::{DeserializeOwned};
 use serde_json;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -11,6 +12,7 @@ const POST_HTTP: &[u8] = " OK\r\n".as_bytes();
 const SEP: &[u8] = "\r\n".as_bytes();
 const SPACE: &[u8] = " ".as_bytes();
 
+#[derive(Clone, Debug)]
 pub enum Method {
   Get,
   Post,
@@ -19,8 +21,29 @@ pub enum Method {
   Delete,
 }
 
+#[derive(Clone, Debug)]
+pub struct Request {
+  pub method: Method,
+  pub url: String,
+  pub headers: HashMap<String, String>,
+  pub size: usize,
+}
+
+impl Request {
+  pub fn new() -> Request {
+    Request{
+      method: Method::Get,
+      url: String::new(),
+      headers: HashMap::new(),
+      size: 0,
+    }
+  }
+}
+
 pub struct Context {
   stream: TcpStream,
+  request: Option<Request>,
+  reader: BufReader<TcpStream>,
 }
 
 impl Context {
@@ -38,17 +61,22 @@ impl Context {
     self.write_body("application/json", w.buffer())
   }
 
-  pub fn read_body(&mut self) -> Result<(Method, String, HashMap<String, String>)> {
-    match self.read_body_internal() {
-      Ok(b) => Result::Ok(b),
-      Err(e) => {
-        error!("http: body read failed {}", e);
-        return Result::Err(e);
-      }
+  pub fn read_json<T>(&mut self) -> Result<T>
+  where
+    T: DeserializeOwned,
+  {
+    let r = &mut self.reader;
+    let req = match &self.request {
+      Some(r) => r,
+      None => return Result::Err(Error::new(ErrorKind::Other, "no request")),
+    };
+    match serde_json::from_reader(r.take(req.size.try_into().unwrap())) {
+      Ok(r) => Result::Ok(r),
+      Err(e) => Result::Err(Error::new(ErrorKind::Other, e.to_string())),
     }
   }
 
-  fn read_first_line(&mut self, s: String) -> Result<(Method, String)> {
+  fn read_first_line(s: String) -> Result<(Method, String)> {
     let mut line = s.split_whitespace();
     let method = match line.next() {
       Some(m) => match m {
@@ -68,10 +96,14 @@ impl Context {
     return Result::Ok((method, String::from(url)));
   }
 
-  fn read_header_line(&mut self, s: String) -> Result<(String, String)> {
+  fn read_header_line(s: String) -> Result<(String, String)> {
     let mut line = s.split_whitespace();
     let name = match line.next() {
-      Some(h) => h.to_lowercase(),
+      Some(h) => {
+        let mut s = h.to_lowercase();
+        s.pop();
+        s
+      },
       None => return Result::Err(Error::new(ErrorKind::Other, "no header name")),
     };
     let value = match line.next() {
@@ -81,12 +113,11 @@ impl Context {
     return Result::Ok((String::from(name), String::from(value)));
   }
 
-  fn read_body_internal(&mut self) -> Result<(Method, String, HashMap<String, String>)> {
-    let r = &mut BufReader::new(self.stream.try_clone().unwrap());
+  pub fn read_request(&mut self) -> Result<String> {
+    let r = &mut self.reader;
+    let mut req = Request::new();
+    let mut url: String = String::new();
     let mut first = true;
-    let mut method = Method::Get;
-    let mut url = String::new();
-    let mut head: HashMap<String, String> = HashMap::new();
 
     for line in r.lines() {
       match line {
@@ -96,18 +127,19 @@ impl Context {
           }
 
           if first {
-            match self.read_first_line(s) {
+            match Context::read_first_line(s) {
               Ok((m, u)) => {
-                method = m;
+                req.method = m;
+                req.url = u.clone();
                 url = u;
               }
               Err(e) => return Result::Err(e),
             };
             first = false;
           } else {
-            match self.read_header_line(s) {
+            match Context::read_header_line(s) {
               Ok((k, v)) => {
-                head.insert(k, v);
+                req.headers.insert(k, v);
               }
               Err(e) => return Result::Err(e),
             }
@@ -117,19 +149,16 @@ impl Context {
       }
     }
 
-    let size: usize = match head.get("content-length") {
+    req.size = match req.headers.get("content-length") {
       Some(len) => len.parse().unwrap(),
       None => 0,
     };
-    let mut buf = vec![0; size];
-    match r.take(size.try_into().unwrap()).read(&mut buf) {
-      Err(e) => return Result::Err(e),
-      _ => (),
-    };
-    return Result::Ok((method, url, head));
+
+    self.request = Option::Some(req);
+    return Result::Ok(url);
   }
 
-  pub fn write_status(&mut self, i: u8) -> Result<()> {
+  pub fn write_status(&mut self, i: u16) -> Result<()> {
     let s: String = i.to_string();
     self
       .stream
@@ -166,8 +195,8 @@ pub fn server(s: &'static str, h: Handler) {
   for stream in listener.incoming() {
     match stream {
       Ok(stream) => {
-        h(Context { stream });
-        info!("http: handled request");
+        let reader = BufReader::new(stream.try_clone().unwrap());
+        h(Context { stream, reader, request: Option::None });
       }
       Err(e) => error!("http: connection failed {}", e),
     }

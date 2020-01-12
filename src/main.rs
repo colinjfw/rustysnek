@@ -1,32 +1,66 @@
 mod net;
+mod snake;
+
+use log::*;
+use serde_json::json;
 
 extern crate env_logger;
 extern crate log;
 extern crate serde;
 extern crate serde_json;
 
-use serde_json::json;
+fn handle_move(board: serde_json::value::Value) -> Result<serde_json::value::Value, u16> {
+  Ok(json!({"direction": "up"}))
+}
 
 fn handle(mut ctx: net::Context) {
-  match ctx.read_body() {
-    Err(_) => return,
-    _ => (),
+  let url = match ctx.read_request() {
+    Ok(url) => url,
+    Err(e) => {
+      error!("http: failed to read headers: {}", e);
+      return;
+    }
   };
-  let value = json!({
-      "code": 200,
-  });
-  match ctx.write_status(200) {
-    Err(e) => {
-      println!("could not read {}", e);
+  let r: Result<serde_json::value::Value, u16> = match url.as_str() {
+    "/move" => match ctx.read_json() {
+      Ok(val) => handle_move(val),
+      Err(e) => {
+        error!("http: failed to read body {}", e);
+        Err(400)
+      }
     },
+    "/start" => Ok(json!({"ok": true})),
+    "/end" => Ok(json!({"ok": true})),
+    "/ping" => Ok(json!({"ok": true})),
+    _ => Err(404),
+  };
+
+  let code: u16;
+  let value: serde_json::value::Value;
+  match r {
+    Ok(j) => {
+      code = 200;
+      value = j;
+    }
+    Err(c) => {
+      code = c;
+      value = json!({ "code": c });
+    }
+  };
+  match ctx.write_status(code) {
     Ok(_) => (),
-  }
+    Err(e) => {
+      error!("http: could not write status {}", e);
+      return;
+    }
+  };
   match ctx.write_json(&value) {
-    Err(e) => {
-      println!("could not write {}", e);
-    },
     Ok(_) => (),
-  }
+    Err(e) => {
+      error!("http: could not write body {}", e);
+      return;
+    }
+  };
 }
 
 fn main() {
