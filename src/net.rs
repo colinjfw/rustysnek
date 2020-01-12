@@ -76,6 +76,7 @@ impl Context {
     }
   }
 
+  #[inline]
   fn read_first_line(s: String) -> Result<(Method, String)> {
     let mut line = s.split_whitespace();
     let method = match line.next() {
@@ -96,6 +97,7 @@ impl Context {
     return Result::Ok((method, String::from(url)));
   }
 
+  #[inline]
   fn read_header_line(s: String) -> Result<(String, String)> {
     let mut line = s.split_whitespace();
     let name = match line.next() {
@@ -113,6 +115,7 @@ impl Context {
     return Result::Ok((String::from(name), String::from(value)));
   }
 
+  #[inline]
   pub fn read_request(&mut self) -> Result<String> {
     let r = &mut self.reader;
     let mut req = Request::new();

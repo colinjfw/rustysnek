@@ -14,7 +14,7 @@
     ],
     "snakes": [
       {
-        "id": "snake-id-string",
+        "id": "825dfd90-1808-4c82-96e7-3485885aae42",
         "name": "Sneky Snek",
         "health": 90,
         "body": [
@@ -27,7 +27,7 @@
     ]
   },
   "you": {
-    "id": "snake-id-string",
+    "id": "825dfd90-1808-4c82-96e7-3485885aae42",
     "name": "Sneky Snek",
     "health": 90,
     "body": [
